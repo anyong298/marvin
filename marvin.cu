@@ -64,7 +64,7 @@ int main(int argc, char **argv){
 	}else if(0==strcmp(argv[1], "activate")){
 
 		Net net(argv[2]);
-		net.Malloc(Testing);
+		net.Malloc(Training);
 		
 		vector<string> models = getStringVector(argv[3]);
 		for (int m=0;m<models.size();++m)	net.loadWeights(models[m]);
