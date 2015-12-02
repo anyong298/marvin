@@ -499,7 +499,7 @@ public:
 		else if (0 == this->member[name]->returnString().compare("Max"))				variable = Max;
 		else if (0 == this->member[name]->returnString().compare("Average"))			variable = Average;
 		else if (0 == this->member[name]->returnString().compare("Sum"))				variable = Sum;
-		else{ std::cout<<"Unsupported "<<name<<" = "<<this->member[name]->returnString()<<std::endl; FatalError(__LINE__); }
+		else{ std::cout<<"Pool Unsupported "<<name<<" = "<<this->member[name]->returnString()<<std::endl; FatalError(__LINE__); }
 	};
 
 	// enum LossObjective { MultinomialLogistic_StableSoftmax, MultinomialLogistic, SmoothL1, EuclideanSSE, HingeL1, HingeL2, SigmoidCrossEntropy, Infogain };
@@ -2132,11 +2132,11 @@ public:
 		size_t sizeofitem_ = sizeofitem();
 		size_t nbBytes = sizeofitem_ * sizeof(T);
 		T* CPUmemNew = new T[numel()];
+		memcpy(CPUmemNew, CPUmem, nbItems * nbBytes);
 		for (size_t i=0;i<nbItems;++i){
-			memcpy(CPUmemNew+i*sizeofitem_, CPUmem+v[i]*sizeofitem_, nbBytes);
+			memcpy(CPUmem+i*sizeofitem_, CPUmemNew+v[i]*sizeofitem_, nbBytes);
 		}
-		delete [] CPUmem;
-		CPUmem = CPUmemNew;
+		delete [] CPUmemNew;
 	};
 
 
@@ -2790,8 +2790,8 @@ public:
 		std::cout<< (train_me? "* " : "  ");
 		std::cout<<name<<std::endl;
 
-		if (!in.empty()){	std::cout<<"TensorLayer shouldn't have any in's"<<std::endl; FatalError(__LINE__); }
-		if (out.empty()){	std::cout<<"TensorLayer should have some out's"<<std::endl; FatalError(__LINE__); }
+		if (!in.empty()){	std::cout<<"TensorLayer: shouldn't have any in's"<<std::endl; FatalError(__LINE__); }
+		if (out.empty()){	std::cout<<"TensorLayer: should have some out's"<<std::endl; FatalError(__LINE__); }
 		if (out.size()!=files.size()){	std::cout<<"TensorLayer: # of out's should match the # of in's"<<std::endl; FatalError(__LINE__); }
 
 		size_t memoryBytes = 0;
@@ -2812,178 +2812,136 @@ public:
 
 
 class MemoryDataLayer : public DataLayer {
-	Tensor<StorageT>* dataCPU;
-	Tensor<StorageT>* labelCPU;
-public:
-	std::string file_data;
-	std::string file_label;
-	std::string file_mean;
+	std::vector<Tensor<StorageT>*> dataCPU;
+	public:
+	std::vector<std::string> file_data;
+	std::vector<std::string> file_mean;
+	std::vector<ComputeT> scale;
+	std::vector<ComputeT> mean;
 	int batch_size;
-	ComputeT scale;
-	ComputeT mean;
 
 	int numofitems(){
-		return dataCPU->dim[0];
+		return dataCPU[0]->dim[0];
 	};
-
 	void init(){
 		train_me = false;
 		std::cout<<"MemoryDataLayer "<<name<<" loading data: "<<std::endl;
-		dataCPU  = new Tensor<StorageT> (file_data,batch_size);
-		dataCPU->print(veci(0));
-
-		if (!file_mean.empty()){
-			Tensor<StorageT>* meanCPU = new Tensor<StorageT>(file_mean);
-			meanCPU->print(veci(0));
-
-			if (meanCPU->numel() != dataCPU->sizeofitem()){
-				std::cerr<<"mean tensor file size error: "<<std::endl;
-				std::cerr<<"mean"; veciPrint(meanCPU->dim); std::cerr<<std::endl;
-				std::cerr<<"data"; veciPrint(dataCPU->dim); std::cerr<<std::endl;
-				FatalError(__LINE__);
-			};
-
-			StorageT* d  = dataCPU->CPUmem;
-			StorageT* dE = dataCPU->CPUmem + dataCPU->numel();
-
-			StorageT* m  = meanCPU->CPUmem;
-			StorageT* mE = meanCPU->CPUmem + meanCPU->numel();
-
-			while(d!=dE){
-				*d = CPUCompute2StorageT( CPUStorage2ComputeT(*d) - CPUStorage2ComputeT(*m) );
-				++m;
-				if (m==mE) m = meanCPU->CPUmem;
-				++d;
-			}
-			delete meanCPU;
+		dataCPU.resize(file_data.size());
+		for (int i =0;i<file_data.size();i++){
+			dataCPU[i] = new Tensor<StorageT> (file_data[i],batch_size);
+			dataCPU[i]->print(veci(0));
 		}
 
-		//std::cout<<"scaling ... ";
-		//tic();
-		//dataCPU->scale(scale);
-		if (scale != 1){
-			StorageT* dE = dataCPU->CPUmem + dataCPU->numel();
-			for(StorageT* d  = dataCPU->CPUmem; d!=dE; ++d){
-				*d = CPUCompute2StorageT( CPUStorage2ComputeT(*d) * scale );
+		if (file_mean.size()>0){
+			for (int i =0;i<file_mean.size();i++){
+				Tensor<StorageT>* meanCPU = new Tensor<StorageT>(file_mean[i],batch_size);
+				meanCPU->print(veci(0));
+
+				if (meanCPU->numel() != dataCPU[i]->sizeofitem()){
+					std::cerr<<"mean tensor file size error: "<<std::endl;
+					std::cerr<<"mean"; veciPrint(meanCPU->dim); std::cerr<<std::endl;
+					std::cerr<<"data"; veciPrint(dataCPU[i]->dim); std::cerr<<std::endl;
+					FatalError(__LINE__);
+				};
+				StorageT* d  = dataCPU[i]->CPUmem;
+				StorageT* dE = dataCPU[i]->CPUmem + dataCPU[i]->numel();
+
+				StorageT* m  = meanCPU->CPUmem;
+				StorageT* mE = meanCPU->CPUmem + meanCPU->numel();
+
+				while(d!=dE){
+					*d = CPUCompute2StorageT( CPUStorage2ComputeT(*d) - CPUStorage2ComputeT(*m) );
+					++m;
+					if (m==mE) m = meanCPU->CPUmem;
+					++d;
+				}
+				delete meanCPU;
 			}
 		}
-		//toc();
 
-		//std::cout<<"subtracting ... ";
-		//tic();
-		//dataCPU->subtract(mean);
-		if (mean != 0){
-			StorageT* dE = dataCPU->CPUmem + dataCPU->numel();
-			for(StorageT* d  = dataCPU->CPUmem; d!=dE; ++d){
-				*d = CPUCompute2StorageT( CPUStorage2ComputeT(*d) - mean );
+		for (int i =0;i<scale.size();i++){
+			if (scale[i]!=1){
+				StorageT* dE = dataCPU[i]->CPUmem + dataCPU[i]->numel();
+				for(StorageT* d  = dataCPU[i]->CPUmem; d!=dE; ++d){
+					*d = CPUCompute2StorageT( CPUStorage2ComputeT(*d) * scale[i] );
+				}
 			}
 		}
-		//toc();
+		for (int i =0;i<mean.size();i++){
+			if (mean[i]!=0){
+				StorageT* dE = dataCPU[i]->CPUmem + dataCPU[i]->numel();
+				for(StorageT* d  = dataCPU[i]->CPUmem; d!=dE; ++d){
+					*d = CPUCompute2StorageT( CPUStorage2ComputeT(*d) - mean[i] );
+				}
+			}
+		}
 
-		labelCPU = new Tensor<StorageT>(file_label,batch_size);
-		labelCPU->print(veci(0));
-		std::cout<<"    "; labelCPU->printRange();
-		while (labelCPU->dim.size()<dataCPU->dim.size())
-			labelCPU->dim.push_back(1);
 		if (phase!=Testing) shuffle();
-	};
+	}
 
-	MemoryDataLayer(std::string name_, Phase phase_, std::string file_data_, std::string file_label_, int batch_size_): DataLayer(name_), batch_size(batch_size_), file_data(file_data_), file_label(file_label_), scale(1.0), mean(0.0){
+	MemoryDataLayer(std::string name_, Phase phase_, std::vector<std::string> file_data_, int batch_size_): DataLayer(name_), batch_size(batch_size_), file_data(file_data_){
 		phase = phase_;
 		init();
 	};
-
 	MemoryDataLayer(JSON* json){
 		SetOrDie(json, name)
 		SetValue(json, phase,		Training)
 		SetOrDie(json, file_data 	)
-		SetOrDie(json, file_label 	)
-		SetValue(json, file_mean,	"")
+		SetValue(json, file_mean,	std::vector<std::string>(0))
 		SetValue(json, batch_size,	64)
-		SetValue(json, scale,		1.0)
-		SetValue(json, mean,		0.0)
+		SetValue(json, scale,		std::vector<ComputeT>(0))
+		SetValue(json, mean,		std::vector<ComputeT>(0))
 		init();
 	};
-
 	~MemoryDataLayer(){
-		delete dataCPU;
-		delete labelCPU;
+		for (int i =0; i<dataCPU.size();i++){
+			delete dataCPU[i];
+		}
 	};
-
 	size_t Malloc(Phase phase_){
-
 		if (phase == Training && phase_==Testing) return 0;
+		
+		if (!in.empty()){	std::cout<<"MemoryDataLayer shouldn't have any in's"<<std::endl; FatalError(__LINE__); }
+		if (out.empty()){	std::cout<<"MemoryDataLayer should have some out's"<<std::endl; FatalError(__LINE__); }
+		if (out.size()!=file_data.size()){	std::cout<<"MemoryDataLayer: # of out's should match the # of in's"<<std::endl; FatalError(__LINE__); }
 
 		size_t memoryBytes = 0;
-
 		std::cout<< (train_me? "* " : "  ");
 		std::cout<<name<<std::endl;
-
-		out[0]->need_diff = false;
-		std::vector<int> data_dim = dataCPU->dim;
-		data_dim[0] = batch_size;
-		out[0]->receptive_field.resize(data_dim.size()-2);	fill_n(out[0]->receptive_field.begin(), data_dim.size()-2,1);
-		out[0]->receptive_gap.resize(data_dim.size()-2);	fill_n(out[0]->receptive_gap.begin(),   data_dim.size()-2,1);
-		out[0]->receptive_offset.resize(data_dim.size()-2);	fill_n(out[0]->receptive_offset.begin(),data_dim.size()-2,0);
-		memoryBytes += out[0]->Malloc(data_dim);
-
-
-		out[1]->need_diff = false;
-		std::vector<int> label_dim= labelCPU->dim;
-		label_dim[0] = batch_size;
-		memoryBytes += out[1]->Malloc(label_dim);
-
+		for (int i = 0;i < file_data.size(); i++){
+			out[i]->need_diff = false;
+			std::vector<int> data_dim = dataCPU[i]->dim;
+			data_dim[0] = batch_size;
+			out[i]->receptive_field.resize(data_dim.size()-2);	fill_n(out[i]->receptive_field.begin(), data_dim.size()-2,1);
+			out[i]->receptive_gap.resize(data_dim.size()-2);	fill_n(out[i]->receptive_gap.begin(),   data_dim.size()-2,1);
+			out[i]->receptive_offset.resize(data_dim.size()-2);	fill_n(out[i]->receptive_offset.begin(),data_dim.size()-2,0);
+			memoryBytes += out[i]->Malloc(data_dim);
+		}
 		return memoryBytes;
-	};
-
+	}
 	void shuffle(){
-
-		//return; // debug
-		//std::cout<<"DEBUG"<<__LINE__<<std::endl;
-		std::vector<size_t> v = randperm(dataCPU->numofitems(), rng);
-		//std::cout<<"DEBUG"<<__LINE__<<std::endl;
-		dataCPU->permute(v);
-		//std::cout<<"DEBUG"<<__LINE__<<std::endl;
-		labelCPU->permute(v);
-		//std::cout<<"DEBUG"<<__LINE__<<std::endl;
+		std::vector<size_t> v = randperm(dataCPU[0]->numofitems(), rng);
+		for(int i =0; i <dataCPU.size();i++){
+			dataCPU[i]->permute(v);
+		}
 	};
 
 	void forward(Phase phase_){
-		if (counter + batch_size >= dataCPU->numofitems() ){
-			//std::cout<<"DEBUG                                     "<<__LINE__<<"counter="<<counter<<std::endl;
+		if (counter + batch_size >= dataCPU[0]->numofitems() ){
 			++epoch;
 			if(phase!=Testing){
 				shuffle();
 				counter = 0;
-				//std::cout<<"Epoch "<<epoch<<std::endl;
 			}
 		}
-		//std::cout<<"DEBUG"<<__LINE__<<std::endl;
-
-		/*
-		std::cout<<std::endl;
-		std::cout<<"batch_size * labelCPU->sizeofitem() * sizeofStorageT = " << batch_size * labelCPU->sizeofitem() * sizeofStorageT <<std::endl;
-		std::cout<<"(size_t(counter) * size_t(labelCPU->sizeofitem())) = " << (size_t(counter) * size_t(labelCPU->sizeofitem())) << std::endl;
-		std::cout<<"labelCPU->CPUmem = "<<labelCPU->CPUmem<<std::endl;
-		std::cout<<"labelCPU->CPUmem + (size_t(counter) * size_t(labelCPU->sizeofitem())) = "<<labelCPU->CPUmem + (size_t(counter) * size_t(labelCPU->sizeofitem()))<<std::endl;
-		*/
-
-		checkCUDA(__LINE__, cudaMemcpy(out[1]->dataGPU, labelCPU->CPUmem + (size_t(counter) * size_t(labelCPU->sizeofitem())), batch_size * labelCPU->sizeofitem() * sizeofStorageT, cudaMemcpyHostToDevice) );
-		/*
-		std::cout<<"DEBUG"<<__LINE__<<std::endl;
-		std::cout<<"counter="<<counter<<std::endl;
-		std::cout<<"dataCPU "; veciPrint(dataCPU->dim); std::cout<<std::endl;
-		std::cout<<"dataCPU->sizeofitem()="<<dataCPU->sizeofitem()<<std::endl;
-		std::cout<<"(size_t(counter) * size_t( dataCPU->sizeofitem()))="<< (size_t(counter) * size_t( dataCPU->sizeofitem())) << std::endl;
-		std::cout<<"numel(dataCPU->dim)="<<numel(dataCPU->dim)<<std::endl;
-		std::cout<<"batch_size * dataCPU->sizeofitem() * sizeofStorageT="<<batch_size * dataCPU->sizeofitem() * sizeofStorageT<<std::endl;
-		*/
-		checkCUDA(__LINE__, cudaMemcpy(out[0]->dataGPU, dataCPU->CPUmem +  (size_t(counter) * size_t( dataCPU->sizeofitem())), batch_size * dataCPU->sizeofitem() * sizeofStorageT, cudaMemcpyHostToDevice) );
-		//std::cout<<"DEBUG"<<__LINE__<<std::endl;
+		for(int i =0; i <dataCPU.size();i++){
+			checkCUDA(__LINE__, cudaMemcpy(out[i]->dataGPU, dataCPU[i]->CPUmem +  (size_t(counter) * size_t( dataCPU[i]->sizeofitem())), batch_size * dataCPU[i]->sizeofitem() * sizeofStorageT, cudaMemcpyHostToDevice) );		
+		}
 		counter+=batch_size;
-		if (counter >= dataCPU->numofitems()) counter = 0;
+		if (counter >= dataCPU[0]->numofitems()) counter = 0;
 	};
 };
+
 
 template <class T>
 class DiskDataLayer : public DataLayer {
@@ -4358,7 +4316,8 @@ public:
 			dimOut[0] = in[i]->dim[0]; // size of mini-bath
 			dimOut[1] = in[i]->dim[1]; // channels
 			for (int d=2;d<in[i]->dim.size();++d){
-				dimOut[d] = 1 + (in[i]->dim[d] + 2*padding[d-2] - window[d-2])/stride[d-2];
+				//dimOut[d] = 1 + (in[i]->dim[d] + 2*padding[d-2] - window[d-2])/stride[d-2];
+				dimOut[d] = 1 + static_cast<int>(ceil(static_cast<float>(in[i]->dim[d] + 2*padding[d-2] - window[d-2])/stride[d-2]));
 			}
 
 			size_t dall = in[i]->receptive_field.size();
@@ -4473,7 +4432,8 @@ public:
 		for (int i=0;i<out.size();++i){
 			out[i]->need_diff = in[i]->need_diff;
 			out[i]->receptive_field = in[i]->receptive_field;
-			out[i]->receptive_gap = in[i]->receptive_gap;			
+			out[i]->receptive_gap = in[i]->receptive_gap;	
+			out[i]->receptive_offset = in[i]->receptive_offset;				
 			memoryBytes += out[i]->Malloc(in[i]->dim);
 		}
 		return memoryBytes;
@@ -4655,7 +4615,8 @@ public:
 			}
 
 			out[i]->receptive_field = in[i*2]->receptive_field;
-			out[i]->receptive_gap = in[i*2]->receptive_gap;			
+			out[i]->receptive_gap = in[i*2]->receptive_gap;	
+			out[i]->receptive_offset = in[i*2]->receptive_offset;			
 			memoryBytes += out[i]->Malloc(dim);
 		}
 		return memoryBytes;
